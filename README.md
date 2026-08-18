@@ -31,11 +31,11 @@ npx @deepseek-ai/dsh web
 
 ## 文件
 
-- `DeepSeekHarnessSetup.exe`：最终用户入口，双击运行。
-- `Start-DeepSeekHarness.ps1`：计划任务调用的后台启动脚本。
+- `DeepSeekHarnessSetup.exe`：最终用户入口，双击运行；已内置后台启动脚本。
 - `DeepSeekHarnessSetup.cs`：图形界面程序源码。
 - `Build.ps1`：维护者构建脚本，用于重新生成 exe。
-- `manager-settings.json`：运行后自动生成，记录上次选择的安装目录。
+- `Start-DeepSeekHarness.ps1`：维护者构建资源，编译时会嵌入 exe。
+- `manager-settings.json`：运行后自动生成到 `%LOCALAPPDATA%\DeepSeekHarnessSetup`，记录上次选择的安装目录。
 
 ## 使用
 
@@ -99,10 +99,12 @@ DeepSeekHarness
 动作格式：
 
 ```text
-powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "<setup目录>\Start-DeepSeekHarness.ps1" -InstallDir "<用户选择的安装目录>"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "<安装目录>\Start-DeepSeekHarness.ps1" -InstallDir "<用户选择的安装目录>"
 ```
 
 计划任务启动时不会显示控制台窗口。
+
+`Start-DeepSeekHarness.ps1` 已经打包在 `DeepSeekHarnessSetup.exe` 里。安装器运行时会自动释放到用户选择的安装目录，再让计划任务引用这个释放出来的脚本。
 
 启动脚本会优先调用：
 
@@ -135,7 +137,7 @@ HKCU\Software\Microsoft\Windows\CurrentVersion\Run\DeepSeekHarness
 
 因此管理器不会强制自动提权。计划任务创建失败时，会先退到当前用户 `HKCU Run` 自启动项，保证普通用户也能完成自启动配置。
 
-如果移动了 `deepseek-harness-setup` 目录，或修改了安装目录，请重新打开 `DeepSeekHarnessSetup.exe` 并点击 `Create Autostart`，让自启动入口指向新的脚本路径和安装目录。
+如果移动了 `DeepSeekHarnessSetup.exe`，不会影响已经创建好的计划任务。若修改了安装目录，请重新打开 `DeepSeekHarnessSetup.exe` 并点击 `Create Autostart`，让自启动入口指向新的安装目录。
 
 ## 维护者重新构建
 

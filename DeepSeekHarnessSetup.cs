@@ -5,6 +5,7 @@ using System.Drawing;
 using System.IO;
 using System.Linq;
 using System.Net;
+using System.Reflection;
 using System.Security.Principal;
 using System.Text;
 using System.Threading;
@@ -30,12 +31,12 @@ namespace DeepSeekHarnessSetup
     {
         private const string TaskName = "DeepSeekHarness";
         private const string RunValueName = "DeepSeekHarness";
+        private const string LauncherResourceName = "Start-DeepSeekHarness.ps1";
         private const string PackageName = "@deepseek-ai/dsh@latest";
         private const string DefaultUrl = "http://127.0.0.1:3080";
         private const int RequiredNodeMajor = 18;
 
         private readonly string scriptRoot;
-        private readonly string launcherPath;
         private readonly string settingsPath;
         private readonly JavaScriptSerializer json = new JavaScriptSerializer();
         private readonly List<Button> actionButtons = new List<Button>();
@@ -60,8 +61,10 @@ namespace DeepSeekHarnessSetup
         public SetupForm()
         {
             scriptRoot = AppDomain.CurrentDomain.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-            launcherPath = Path.Combine(scriptRoot, "Start-DeepSeekHarness.ps1");
-            settingsPath = Path.Combine(scriptRoot, "manager-settings.json");
+            settingsPath = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "DeepSeekHarnessSetup",
+                "manager-settings.json");
             BuildUi();
         }
 
@@ -133,7 +136,7 @@ namespace DeepSeekHarnessSetup
             Shown += delegate
             {
                 AddLog("Manager started.");
-                AddLog("Launcher script: " + launcherPath);
+                AddLog("Launcher script will be extracted to: " + GetLauncherPath());
                 AddLog(IsAdministrator() ? "Process is elevated." : "Process is not elevated. Use Restart as Admin only if the current user is an administrator.");
                 restartAdminButton.Enabled = !IsAdministrator();
                 UpdateStatus();
@@ -184,6 +187,7 @@ namespace DeepSeekHarnessSetup
         private string GetLogRoot() { return Path.Combine(GetInstallDir(), "logs"); }
         private string GetNpmCacheRoot() { return Path.Combine(GetInstallDir(), "npm-cache"); }
         private string GetRuntimeRoot() { return Path.Combine(GetInstallDir(), "runtime"); }
+        private string GetLauncherPath() { return Path.Combine(GetInstallDir(), "Start-DeepSeekHarness.ps1"); }
 
         private void BrowseInstallDirectory()
         {
@@ -305,6 +309,7 @@ namespace DeepSeekHarnessSetup
             Directory.CreateDirectory(GetLogRoot());
             Directory.CreateDirectory(GetNpmCacheRoot());
             Directory.CreateDirectory(GetRuntimeRoot());
+            Directory.CreateDirectory(Path.GetDirectoryName(settingsPath));
             var settings = new Dictionary<string, object> { { "InstallDir", GetInstallDir() }, { "UpdatedAt", DateTime.Now.ToString("s") } };
             File.WriteAllText(settingsPath, json.Serialize(settings), Encoding.UTF8);
         }
@@ -329,8 +334,39 @@ namespace DeepSeekHarnessSetup
 
         private void EnsureLauncher()
         {
-            if (!File.Exists(launcherPath)) throw new FileNotFoundException("Launcher script is missing.", launcherPath);
+            ExtractLauncherScript();
             WriteLauncherConfig();
+        }
+
+        private void ExtractLauncherScript()
+        {
+            EnsureInstallDirectories();
+            var target = GetLauncherPath();
+            byte[] bytes;
+
+            using (var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream(LauncherResourceName))
+            {
+                if (stream != null)
+                {
+                    using (var memory = new MemoryStream())
+                    {
+                        stream.CopyTo(memory);
+                        bytes = memory.ToArray();
+                    }
+                }
+                else
+                {
+                    var fallback = Path.Combine(scriptRoot, "Start-DeepSeekHarness.ps1");
+                    if (!File.Exists(fallback)) throw new FileNotFoundException("Embedded launcher script is missing.", fallback);
+                    bytes = File.ReadAllBytes(fallback);
+                }
+            }
+
+            if (!File.Exists(target) || !File.ReadAllBytes(target).SequenceEqual(bytes))
+            {
+                File.WriteAllBytes(target, bytes);
+                AddLog("Launcher script extracted: " + target);
+            }
         }
 
         private void UpdateStatus()
@@ -573,7 +609,7 @@ namespace DeepSeekHarnessSetup
             dynamic action = definition.Actions.Create(0);
             action.Path = GetPowerShellPath();
             action.Arguments = GetLauncherArguments();
-            action.WorkingDirectory = scriptRoot;
+            action.WorkingDirectory = GetInstallDir();
 
             folder.RegisterTaskDefinition(TaskName, definition, 6, null, null, 3, null);
         }
@@ -585,7 +621,7 @@ namespace DeepSeekHarnessSetup
 
         private string GetLauncherArguments()
         {
-            return "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File " + QuoteArg(launcherPath) + " -InstallDir " + QuoteArg(GetInstallDir());
+            return "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File " + QuoteArg(GetLauncherPath()) + " -InstallDir " + QuoteArg(GetInstallDir());
         }
 
         private string GetLauncherCommand()

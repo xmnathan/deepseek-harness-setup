@@ -4,6 +4,7 @@ param()
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSCommandPath
 $source = Join-Path $root 'DeepSeekHarnessSetup.cs'
+$launcher = Join-Path $root 'Start-DeepSeekHarness.ps1'
 $output = Join-Path $root 'DeepSeekHarnessSetup.exe'
 
 $candidates = @(
@@ -27,6 +28,7 @@ if (-not $csc) {
     /reference:System.Windows.Forms.dll `
     /reference:System.Web.Extensions.dll `
     /reference:Microsoft.CSharp.dll `
+    "/resource:$launcher,Start-DeepSeekHarness.ps1" `
     $source
 
 if ($LASTEXITCODE -ne 0) {
