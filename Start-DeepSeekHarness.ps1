@@ -5,6 +5,11 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+$OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+try {
+    [Console]::OutputEncoding = $OutputEncoding
+} catch {
+}
 
 if (-not $InstallDir) {
     if ($ConfigPath) {
@@ -23,6 +28,8 @@ $logRoot = Join-Path $appRoot 'logs'
 $npmCacheRoot = Join-Path $appRoot 'npm-cache'
 New-Item -ItemType Directory -Force -Path $appRoot, $logRoot, $npmCacheRoot | Out-Null
 $env:npm_config_cache = $npmCacheRoot
+$env:NO_COLOR = '1'
+$env:FORCE_COLOR = '0'
 
 function Add-ExistingPath {
     param([string]$Path)
@@ -98,7 +105,7 @@ $latestLog = Join-Path $logRoot 'latest.log'
 Copy-Item -LiteralPath $logFile -Destination $latestLog -Force
 
 $npxArguments = @('--yes', $packageName) + $arguments
-& $npx @npxArguments 2>&1 | Tee-Object -FilePath $logFile -Append | Tee-Object -FilePath $latestLog
+& $npx @npxArguments 2>&1 | Tee-Object -FilePath $logFile -Append | Tee-Object -FilePath $latestLog -Append
 $exitCode = $LASTEXITCODE
 
 "[$(Get-Date -Format s)] Exited with code $exitCode" | Tee-Object -FilePath $logFile -Append | Tee-Object -FilePath $latestLog -Append

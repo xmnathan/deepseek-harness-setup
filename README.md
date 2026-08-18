@@ -19,7 +19,7 @@ DeepSeekHarnessSetup.exe
 5. 将配置、日志、下载缓存、npm cache 写入用户指定安装目录。
 6. 优先创建计划任务 `DeepSeekHarness`，当前用户登录后自动启动。
 7. 如果系统策略拒绝创建计划任务，自动退到当前用户 `HKCU Run` 自启动项。
-8. 启动后打开 `http://127.0.0.1:3080`。
+8. 启动后最多等待 120 秒检测 `http://127.0.0.1:3080`，服务 ready 后再打开浏览器。
 
 DeepSeek Harness 官方快速启动方式：
 
@@ -44,7 +44,7 @@ npx @deepseek-ai/dsh web
 3. 默认安装目录是 `D:\deepseek-harness`，也可以手动选择其他目录。
 4. 点击 `Install and Start`。
 5. 如果安装 Node.js 时弹出 UAC，请允许。
-6. 完成后访问 `http://127.0.0.1:3080`。
+6. 管理器检测到 Web UI ready 后会自动打开 `http://127.0.0.1:3080`。
 
 ## 安装目录说明
 
@@ -53,6 +53,7 @@ npx @deepseek-ai/dsh web
 - `config.json`：DeepSeek Harness 启动配置。
 - `logs\latest.log`：最新运行日志。
 - `logs\deepseek-harness-*.log`：历史运行日志。
+- `logs\dsh-web*.log`：DeepSeek Harness 自身生成的 Web 服务日志。
 - `downloads\`：Node.js MSI 下载缓存。
 - `npm-cache\`：npm/npx 下载包缓存。
 
@@ -72,6 +73,7 @@ C:\Program Files\nodejs
 - 需要能访问 `nodejs.org` 和 npm registry。
 - 如果系统有 winget，会优先尝试 `winget install OpenJS.NodeJS.LTS`。
 - 如果 winget 不可用或失败，会从 `nodejs.org` 下载最新 LTS MSI 安装。
+- winget、npm、node 输出会按 UTF-8 读取，避免安装日志中的中文乱码。
 - npm/npx 随 Node.js 安装。
 - 不需要 Git、pnpm、Python 或 Visual Studio。
 
@@ -138,7 +140,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Build.ps1
 
 ## 常见问题
 
-- Web 页面打不开：点击 `Refresh Status`，确认 `Autostart` 不是 `not created`；再点击 `Open Logs` 查看 `latest.log`。
+- Web 页面打不开：点击 `Refresh Status`，确认 `Autostart` 不是 `not created`；再点击 `Open Logs` 查看 `latest.log` 和 `dsh-web*.log`。
 - npm 下载失败：检查代理、防火墙或公司网络是否允许访问 npm registry。
 - Node.js 安装后仍提示未找到：关闭程序后重新打开，或重启 Windows 让 PATH 刷新。
 - 不想自启动：点击 `Remove Task`，会同时尝试删除计划任务和 HKCU Run 兜底项。

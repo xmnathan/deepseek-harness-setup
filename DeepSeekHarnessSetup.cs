@@ -307,9 +307,16 @@ namespace DeepSeekHarnessSetup
             EnsureDeepSeekHarnessPackage();
             RegisterTask();
             StartTask();
-            AddLog("Waiting for service startup, then opening: " + DefaultUrl);
-            Thread.Sleep(5000);
-            Process.Start(DefaultUrl);
+            if (WaitForWebUi(DefaultUrl, TimeSpan.FromSeconds(120)))
+            {
+                Process.Start(DefaultUrl);
+            }
+            else
+            {
+                AddLog("Web UI did not become ready within 120 seconds.");
+                AddLog("Check logs under: " + GetLogRoot());
+                AddLog("Expected URL: " + DefaultUrl);
+            }
         }
 
         private void EnsureNode()
@@ -568,6 +575,47 @@ namespace DeepSeekHarnessSetup
             AddLog("Hidden launcher started.");
         }
 
+        private bool WaitForWebUi(string url, TimeSpan timeout)
+        {
+            AddLog("Waiting for Web UI: " + url);
+            var deadline = DateTime.UtcNow.Add(timeout);
+            Exception lastError = null;
+
+            while (DateTime.UtcNow < deadline)
+            {
+                try
+                {
+                    var request = (HttpWebRequest)WebRequest.Create(url);
+                    request.Method = "GET";
+                    request.Timeout = 3000;
+                    request.ReadWriteTimeout = 3000;
+                    request.CachePolicy = new System.Net.Cache.RequestCachePolicy(System.Net.Cache.RequestCacheLevel.NoCacheNoStore);
+
+                    using (var response = (HttpWebResponse)request.GetResponse())
+                    {
+                        if ((int)response.StatusCode >= 200 && (int)response.StatusCode < 500)
+                        {
+                            AddLog("Web UI is ready: HTTP " + (int)response.StatusCode);
+                            return true;
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex;
+                }
+
+                Thread.Sleep(2000);
+            }
+
+            if (lastError != null)
+            {
+                AddLog("Last Web UI check error: " + lastError.Message);
+            }
+
+            return false;
+        }
+
         private NodeInfo GetNodeInfo()
         {
             var nodePath = GetNodePath();
@@ -646,7 +694,9 @@ namespace DeepSeekHarnessSetup
                 CreateNoWindow = true,
                 WindowStyle = ProcessWindowStyle.Hidden,
                 RedirectStandardOutput = true,
-                RedirectStandardError = true
+                RedirectStandardError = true,
+                StandardOutputEncoding = GetProcessOutputEncoding(fileName),
+                StandardErrorEncoding = GetProcessOutputEncoding(fileName)
             };
             if (env != null)
             {
@@ -672,6 +722,20 @@ namespace DeepSeekHarnessSetup
             var identity = WindowsIdentity.GetCurrent();
             var principal = new WindowsPrincipal(identity);
             return principal.IsInRole(WindowsBuiltInRole.Administrator);
+        }
+
+        private static Encoding GetProcessOutputEncoding(string fileName)
+        {
+            var name = Path.GetFileName(fileName ?? "");
+            if (name.Equals("winget.exe", StringComparison.OrdinalIgnoreCase) ||
+                name.Equals("npm.cmd", StringComparison.OrdinalIgnoreCase) ||
+                name.Equals("npx.cmd", StringComparison.OrdinalIgnoreCase) ||
+                name.Equals("node.exe", StringComparison.OrdinalIgnoreCase))
+            {
+                return new UTF8Encoding(false);
+            }
+
+            return Encoding.Default;
         }
 
         private void RestartAsAdmin()
