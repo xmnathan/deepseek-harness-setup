@@ -26,7 +26,8 @@ if (-not $ConfigPath) {
 
 $logRoot = Join-Path $appRoot 'logs'
 $npmCacheRoot = Join-Path $appRoot 'npm-cache'
-New-Item -ItemType Directory -Force -Path $appRoot, $logRoot, $npmCacheRoot | Out-Null
+$runtimeRoot = Join-Path $appRoot 'runtime'
+New-Item -ItemType Directory -Force -Path $appRoot, $logRoot, $npmCacheRoot, $runtimeRoot | Out-Null
 $env:npm_config_cache = $npmCacheRoot
 $env:NO_COLOR = '1'
 $env:FORCE_COLOR = '0'
@@ -75,6 +76,7 @@ function Get-NpxPath {
 $packageName = '@deepseek-ai/dsh@latest'
 $arguments = @('web')
 $webUrl = 'http://127.0.0.1:3080'
+$localBin = Join-Path $runtimeRoot 'node_modules\.bin\dsh.cmd'
 
 if (Test-Path -LiteralPath $ConfigPath) {
     $config = Get-Content -LiteralPath $ConfigPath -Raw | ConvertFrom-Json
@@ -87,6 +89,14 @@ if (Test-Path -LiteralPath $ConfigPath) {
     if ($config.Url) {
         $webUrl = [string]$config.Url
     }
+    if ($config.RuntimeDir) {
+        $runtimeRoot = [string]$config.RuntimeDir
+    }
+    if ($config.LocalBin) {
+        $localBin = [string]$config.LocalBin
+    } else {
+        $localBin = Join-Path $runtimeRoot 'node_modules\.bin\dsh.cmd'
+    }
 }
 
 $npx = Get-NpxPath
@@ -97,6 +107,8 @@ $latestLog = Join-Path $logRoot 'latest.log'
 "[$(Get-Date -Format s)] Starting DeepSeek Harness" | Tee-Object -FilePath $logFile | Out-Null
 "installDir: $appRoot" | Tee-Object -FilePath $logFile -Append | Out-Null
 "npmCache: $npmCacheRoot" | Tee-Object -FilePath $logFile -Append | Out-Null
+"runtime: $runtimeRoot" | Tee-Object -FilePath $logFile -Append | Out-Null
+"localBin: $localBin" | Tee-Object -FilePath $logFile -Append | Out-Null
 "npx: $npx" | Tee-Object -FilePath $logFile -Append | Out-Null
 "package: $packageName" | Tee-Object -FilePath $logFile -Append | Out-Null
 "arguments: $($arguments -join ' ')" | Tee-Object -FilePath $logFile -Append | Out-Null
@@ -104,8 +116,14 @@ $latestLog = Join-Path $logRoot 'latest.log'
 
 Copy-Item -LiteralPath $logFile -Destination $latestLog -Force
 
-$npxArguments = @('--yes', $packageName) + $arguments
-& $npx @npxArguments 2>&1 | Tee-Object -FilePath $logFile -Append | Tee-Object -FilePath $latestLog -Append
+if (Test-Path -LiteralPath $localBin) {
+    "launch: $localBin $($arguments -join ' ')" | Tee-Object -FilePath $logFile -Append | Tee-Object -FilePath $latestLog -Append
+    & $localBin @arguments 2>&1 | Tee-Object -FilePath $logFile -Append | Tee-Object -FilePath $latestLog -Append
+} else {
+    "local bin not found, fallback to npx" | Tee-Object -FilePath $logFile -Append | Tee-Object -FilePath $latestLog -Append
+    $npxArguments = @('--yes', $packageName) + $arguments
+    & $npx @npxArguments 2>&1 | Tee-Object -FilePath $logFile -Append | Tee-Object -FilePath $latestLog -Append
+}
 $exitCode = $LASTEXITCODE
 
 "[$(Get-Date -Format s)] Exited with code $exitCode" | Tee-Object -FilePath $logFile -Append | Tee-Object -FilePath $latestLog -Append

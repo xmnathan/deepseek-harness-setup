@@ -39,6 +39,9 @@ namespace DeepSeekHarnessSetup
         private readonly string settingsPath;
         private readonly JavaScriptSerializer json = new JavaScriptSerializer();
         private readonly List<Button> actionButtons = new List<Button>();
+        private volatile bool backgroundWorkRunning;
+        private string backgroundWorkName = "";
+        private DateTime backgroundWorkStartedAt;
 
         private TextBox installDirBox;
         private TextBox logBox;
@@ -172,6 +175,7 @@ namespace DeepSeekHarnessSetup
         private string GetConfigPath() { return Path.Combine(GetInstallDir(), "config.json"); }
         private string GetLogRoot() { return Path.Combine(GetInstallDir(), "logs"); }
         private string GetNpmCacheRoot() { return Path.Combine(GetInstallDir(), "npm-cache"); }
+        private string GetRuntimeRoot() { return Path.Combine(GetInstallDir(), "runtime"); }
 
         private void BrowseInstallDirectory()
         {
@@ -218,6 +222,10 @@ namespace DeepSeekHarnessSetup
         {
             SetBusy(true);
             AddLog(name + "...");
+            backgroundWorkName = name;
+            backgroundWorkStartedAt = DateTime.UtcNow;
+            backgroundWorkRunning = true;
+            StartProgressHeartbeat();
             ThreadPool.QueueUserWorkItem(delegate
             {
                 try
@@ -231,8 +239,23 @@ namespace DeepSeekHarnessSetup
                 }
                 finally
                 {
+                    backgroundWorkRunning = false;
                     try { UpdateStatus(); } catch (Exception ex) { AddLog("Status refresh failed: " + ex.Message); }
                     SetBusy(false);
+                }
+            });
+        }
+
+        private void StartProgressHeartbeat()
+        {
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                while (backgroundWorkRunning)
+                {
+                    Thread.Sleep(15000);
+                    if (!backgroundWorkRunning) break;
+                    var elapsed = DateTime.UtcNow - backgroundWorkStartedAt;
+                    AddLog(backgroundWorkName + " still running... elapsed " + FormatDuration(elapsed));
                 }
             });
         }
@@ -242,6 +265,7 @@ namespace DeepSeekHarnessSetup
             Directory.CreateDirectory(GetInstallDir());
             Directory.CreateDirectory(GetLogRoot());
             Directory.CreateDirectory(GetNpmCacheRoot());
+            Directory.CreateDirectory(GetRuntimeRoot());
             var settings = new Dictionary<string, object> { { "InstallDir", GetInstallDir() }, { "UpdatedAt", DateTime.Now.ToString("s") } };
             File.WriteAllText(settingsPath, json.Serialize(settings), Encoding.UTF8);
         }
@@ -256,6 +280,8 @@ namespace DeepSeekHarnessSetup
                 { "Url", DefaultUrl },
                 { "InstallDir", GetInstallDir() },
                 { "NpmCache", GetNpmCacheRoot() },
+                { "RuntimeDir", GetRuntimeRoot() },
+                { "LocalBin", Path.Combine(GetRuntimeRoot(), "node_modules\\.bin\\dsh.cmd") },
                 { "UpdatedAt", DateTime.Now.ToString("s") }
             };
             File.WriteAllText(GetConfigPath(), json.Serialize(config), Encoding.UTF8);
@@ -404,10 +430,19 @@ namespace DeepSeekHarnessSetup
             EnsureInstallDirectories();
             var npm = GetNpmPath();
             if (npm == null) throw new FileNotFoundException("npm.cmd was not found. Confirm Node.js is installed completely.");
-            var env = new Dictionary<string, string> { { "npm_config_cache", GetNpmCacheRoot() } };
+            var env = new Dictionary<string, string>
+            {
+                { "npm_config_cache", GetNpmCacheRoot() },
+                { "Path", BuildSearchPath() },
+                { "npm_config_scripts_prepend_node_path", "true" }
+            };
             AddLog("npm cache: " + GetNpmCacheRoot());
-            var add = RunProcess(npm, "cache add " + PackageName, env, true);
-            if (add.ExitCode != 0) throw new InvalidOperationException("npm cache add failed with code " + add.ExitCode);
+            AddLog("runtime: " + GetRuntimeRoot());
+            AddLog("Installing DeepSeek Harness locally. First install can take several minutes on a new machine.");
+            var installArgs = "--prefix " + QuoteArg(GetRuntimeRoot()) + " install --no-audit --no-fund --loglevel=notice --progress=true " + PackageName;
+            var install = RunProcess(npm, installArgs, env, true);
+            if (install.ExitCode != 0) throw new InvalidOperationException("npm install failed with code " + install.ExitCode);
+            AddLog("DeepSeek Harness package install completed.");
             var view = RunProcess(npm, "view @deepseek-ai/dsh version", env, true);
             if (view.ExitCode != 0) throw new InvalidOperationException("npm view failed with code " + view.ExitCode);
         }
@@ -728,8 +763,6 @@ namespace DeepSeekHarnessSetup
         {
             var name = Path.GetFileName(fileName ?? "");
             if (name.Equals("winget.exe", StringComparison.OrdinalIgnoreCase) ||
-                name.Equals("npm.cmd", StringComparison.OrdinalIgnoreCase) ||
-                name.Equals("npx.cmd", StringComparison.OrdinalIgnoreCase) ||
                 name.Equals("node.exe", StringComparison.OrdinalIgnoreCase))
             {
                 return new UTF8Encoding(false);
@@ -761,6 +794,19 @@ namespace DeepSeekHarnessSetup
         private static string QuoteArg(string value)
         {
             return "\"" + (value ?? "").Replace("\"", "\\\"") + "\"";
+        }
+
+        private static string FormatDuration(TimeSpan duration)
+        {
+            if (duration.TotalHours >= 1)
+            {
+                return ((int)duration.TotalHours) + "h " + duration.Minutes + "m " + duration.Seconds + "s";
+            }
+            if (duration.TotalMinutes >= 1)
+            {
+                return duration.Minutes + "m " + duration.Seconds + "s";
+            }
+            return duration.Seconds + "s";
         }
 
         private sealed class NodeInfo

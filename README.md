@@ -15,7 +15,7 @@ DeepSeekHarnessSetup.exe
 1. 支持用户选择安装目录。
 2. 检查 Node.js、npm、npx。
 3. 缺少 Node.js 时安装 Node.js LTS。
-4. 预拉取 `@deepseek-ai/dsh@latest`。
+4. 将 `@deepseek-ai/dsh@latest` 安装到本地运行目录。
 5. 将配置、日志、下载缓存、npm cache 写入用户指定安装目录。
 6. 优先创建计划任务 `DeepSeekHarness`，当前用户登录后自动启动。
 7. 如果系统策略拒绝创建计划任务，自动退到当前用户 `HKCU Run` 自启动项。
@@ -55,7 +55,8 @@ npx @deepseek-ai/dsh web
 - `logs\deepseek-harness-*.log`：历史运行日志。
 - `logs\dsh-web*.log`：DeepSeek Harness 自身生成的 Web 服务日志。
 - `downloads\`：Node.js MSI 下载缓存。
-- `npm-cache\`：npm/npx 下载包缓存。
+- `npm-cache\`：npm 下载包缓存。
+- `runtime\`：本地安装的 `@deepseek-ai/dsh` 运行目录。
 
 Node.js 本身仍按 Windows 标准方式安装到系统目录，例如：
 
@@ -76,6 +77,7 @@ C:\Program Files\nodejs
 - winget、npm、node 输出会按 UTF-8 读取，避免安装日志中的中文乱码。
 - npm/npx 随 Node.js 安装。
 - 不需要 Git、pnpm、Python 或 Visual Studio。
+- Node.js 刚安装完成后，安装器会给 npm 子进程显式注入 Node.js 路径，避免依赖构建脚本提示 `node` 不是内部或外部命令。
 
 ## 自启动方式
 
@@ -100,6 +102,14 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "<se
 ```
 
 计划任务启动时不会显示控制台窗口。
+
+启动脚本会优先调用：
+
+```text
+<安装目录>\runtime\node_modules\.bin\dsh.cmd web
+```
+
+只有本地运行目录缺失时，才会退回 `npx --yes @deepseek-ai/dsh@latest web`。
 
 如果创建计划任务时遇到 `拒绝访问`，通常是当前 Windows 用户、公司策略或系统任务计划程序权限限制导致。管理器会自动退到当前用户注册表自启动项：
 
@@ -142,6 +152,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Build.ps1
 
 - Web 页面打不开：点击 `Refresh Status`，确认 `Autostart` 不是 `not created`；再点击 `Open Logs` 查看 `latest.log` 和 `dsh-web*.log`。
 - npm 下载失败：检查代理、防火墙或公司网络是否允许访问 npm registry。
+- `npm warn deprecated node-domexception...`：这是上游依赖警告，不代表安装失败。
 - Node.js 安装后仍提示未找到：关闭程序后重新打开，或重启 Windows 让 PATH 刷新。
 - 不想自启动：点击 `Remove Task`，会同时尝试删除计划任务和 HKCU Run 兜底项。
 
