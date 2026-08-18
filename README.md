@@ -44,7 +44,8 @@ npx @deepseek-ai/dsh web
 3. 默认安装目录是 `D:\deepseek-harness`，也可以手动选择其他目录。
 4. 点击 `Install and Start`。
 5. 如果安装 Node.js 时弹出 UAC，请允许。
-6. 管理器检测到 Web UI ready 后会自动打开 `http://127.0.0.1:3080`。
+6. 安装期间界面会显示动态进度条，并每隔一段时间输出 still running 状态。
+7. 管理器检测到 Web UI ready 后会自动打开 `http://127.0.0.1:3080`。
 
 ## 安装目录说明
 

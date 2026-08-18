@@ -51,6 +51,8 @@ namespace DeepSeekHarnessSetup
         private Label taskStatusLabel;
         private Label installInfoLabel;
         private Label cacheInfoLabel;
+        private Label progressLabel;
+        private ProgressBar progressBar;
         private CheckBox preferWingetCheck;
         private Button browseButton;
         private Button restartAdminButton;
@@ -67,8 +69,8 @@ namespace DeepSeekHarnessSetup
         {
             Text = "DeepSeek Harness Setup";
             StartPosition = FormStartPosition.CenterScreen;
-            Size = new Size(900, 680);
-            MinimumSize = new Size(840, 600);
+            Size = new Size(900, 720);
+            MinimumSize = new Size(840, 640);
 
             var title = new Label { Text = "DeepSeek Harness Setup", Font = new Font("Segoe UI", 14, FontStyle.Bold), AutoSize = true, Location = new Point(18, 16) };
             Controls.Add(title);
@@ -119,7 +121,13 @@ namespace DeepSeekHarnessSetup
             NewButton(buttonsPanel, "Open Logs", 120, delegate { EnsureInstallDirectories(); Process.Start(GetLogRoot()); });
             restartAdminButton = NewButton(buttonsPanel, "Restart as Admin", 130, delegate { RestartAsAdmin(); });
 
-            logBox = new TextBox { Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical, Font = new Font("Consolas", 9), Location = new Point(20, 446), Size = new Size(840, 170), Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right };
+            progressLabel = new Label { Text = "Ready", AutoSize = true, Location = new Point(24, 440) };
+            Controls.Add(progressLabel);
+
+            progressBar = new ProgressBar { Location = new Point(20, 462), Size = new Size(840, 18), Style = ProgressBarStyle.Continuous, Visible = false, Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
+            Controls.Add(progressBar);
+
+            logBox = new TextBox { Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical, Font = new Font("Consolas", 9), Location = new Point(20, 492), Size = new Size(840, 150), Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right };
             Controls.Add(logBox);
 
             Shown += delegate
@@ -215,13 +223,27 @@ namespace DeepSeekHarnessSetup
             if (restartAdminButton != null && !busy) restartAdminButton.Enabled = !IsAdministrator();
             installDirBox.Enabled = !busy;
             browseButton.Enabled = !busy;
-            UseWaitCursor = busy;
+            UseWaitCursor = false;
+            Cursor = Cursors.Default;
+
+            if (progressBar != null)
+            {
+                progressBar.Visible = busy;
+                progressBar.Style = busy ? ProgressBarStyle.Marquee : ProgressBarStyle.Continuous;
+                progressBar.MarqueeAnimationSpeed = busy ? 35 : 0;
+            }
+
+            if (!busy)
+            {
+                SetProgressText("Ready");
+            }
         }
 
         private void RunBackground(string name, Action action)
         {
             SetBusy(true);
             AddLog(name + "...");
+            SetProgressText(name + "...");
             backgroundWorkName = name;
             backgroundWorkStartedAt = DateTime.UtcNow;
             backgroundWorkRunning = true;
@@ -232,10 +254,12 @@ namespace DeepSeekHarnessSetup
                 {
                     action();
                     AddLog(name + " completed.");
+                    SetProgressText(name + " completed.");
                 }
                 catch (Exception ex)
                 {
                     AddLog("Failed: " + ex.Message);
+                    SetProgressText(name + " failed.");
                 }
                 finally
                 {
@@ -255,9 +279,24 @@ namespace DeepSeekHarnessSetup
                     Thread.Sleep(15000);
                     if (!backgroundWorkRunning) break;
                     var elapsed = DateTime.UtcNow - backgroundWorkStartedAt;
-                    AddLog(backgroundWorkName + " still running... elapsed " + FormatDuration(elapsed));
+                    var message = backgroundWorkName + " still running... elapsed " + FormatDuration(elapsed);
+                    SetProgressText(message);
                 }
             });
+        }
+
+        private void SetProgressText(string text)
+        {
+            if (progressLabel != null && progressLabel.InvokeRequired)
+            {
+                progressLabel.BeginInvoke(new Action<string>(SetProgressText), text);
+                return;
+            }
+
+            if (progressLabel != null)
+            {
+                progressLabel.Text = text;
+            }
         }
 
         private void EnsureInstallDirectories()
