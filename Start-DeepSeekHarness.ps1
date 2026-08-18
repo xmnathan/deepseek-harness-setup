@@ -10,7 +10,7 @@ if (-not $InstallDir) {
     if ($ConfigPath) {
         $InstallDir = Split-Path -Parent $ConfigPath
     } else {
-        $InstallDir = Join-Path $env:LOCALAPPDATA 'DeepSeekHarness'
+        $InstallDir = 'D:\deepseek-harness'
     }
 }
 

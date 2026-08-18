@@ -147,7 +147,7 @@ namespace DeepSeekHarnessSetup
 
         private string GetDefaultInstallDir()
         {
-            return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "DeepSeekHarness");
+            return @"D:\deepseek-harness";
         }
 
         private string GetSavedInstallDir()

@@ -41,7 +41,7 @@ npx @deepseek-ai/dsh web
 
 1. 打开 `deepseek-harness-setup`。
 2. 双击 `DeepSeekHarnessSetup.exe`。
-3. 选择安装目录，例如 `D:\DeepSeekHarness`。
+3. 默认安装目录是 `D:\deepseek-harness`，也可以手动选择其他目录。
 4. 点击 `Install and Start`。
 5. 如果安装 Node.js 时弹出 UAC，请允许。
 6. 完成后访问 `http://127.0.0.1:3080`。
