@@ -7,6 +7,12 @@ $source = Join-Path $root 'DeepSeekHarnessSetup.cs'
 $launcher = Join-Path $root 'Start-DeepSeekHarness.ps1'
 $output = Join-Path $root 'DeepSeekHarnessSetup.exe'
 
+$running = Get-Process -Name 'DeepSeekHarnessSetup' -ErrorAction SilentlyContinue |
+    Where-Object { $_.Path -eq $output }
+if ($running) {
+    throw "DeepSeekHarnessSetup.exe is running. Close it before rebuilding: $output"
+}
+
 $candidates = @(
     (Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'),
     (Join-Path $env:WINDIR 'Microsoft.NET\Framework\v4.0.30319\csc.exe')

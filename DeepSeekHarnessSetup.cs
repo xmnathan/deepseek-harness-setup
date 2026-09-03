@@ -23,7 +23,47 @@ namespace DeepSeekHarnessSetup
             ServicePointManager.SecurityProtocol |= (SecurityProtocolType)3072;
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
+
+            if (!IsAdministrator())
+            {
+                if (!RelaunchAsAdministrator())
+                {
+                    MessageBox.Show(
+                        "DeepSeek Harness Setup needs administrator privileges to install dependencies and register autostart.\r\n\r\nPlease allow the UAC prompt and run it again.",
+                        "Administrator privileges required",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Warning);
+                }
+                return;
+            }
+
             Application.Run(new SetupForm());
+        }
+
+        private static bool IsAdministrator()
+        {
+            var identity = WindowsIdentity.GetCurrent();
+            var principal = new WindowsPrincipal(identity);
+            return principal.IsInRole(WindowsBuiltInRole.Administrator);
+        }
+
+        private static bool RelaunchAsAdministrator()
+        {
+            try
+            {
+                var info = new ProcessStartInfo(Application.ExecutablePath)
+                {
+                    UseShellExecute = true,
+                    Verb = "runas",
+                    WorkingDirectory = AppDomain.CurrentDomain.BaseDirectory
+                };
+                Process.Start(info);
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
         }
     }
 
@@ -41,8 +81,8 @@ namespace DeepSeekHarnessSetup
         private readonly JavaScriptSerializer json = new JavaScriptSerializer();
         private readonly List<Button> actionButtons = new List<Button>();
         private volatile bool backgroundWorkRunning;
+        private volatile bool lastAutostartUsedRunKey;
         private string backgroundWorkName = "";
-        private DateTime backgroundWorkStartedAt;
 
         private TextBox installDirBox;
         private TextBox logBox;
@@ -56,7 +96,6 @@ namespace DeepSeekHarnessSetup
         private ProgressBar progressBar;
         private CheckBox preferWingetCheck;
         private Button browseButton;
-        private Button restartAdminButton;
 
         public SetupForm()
         {
@@ -78,7 +117,7 @@ namespace DeepSeekHarnessSetup
             var title = new Label { Text = "DeepSeek Harness Setup", Font = new Font("Segoe UI", 14, FontStyle.Bold), AutoSize = true, Location = new Point(18, 16) };
             Controls.Add(title);
 
-            var subtitle = new Label { Text = "Install dependencies, fetch @deepseek-ai/dsh, and create a hidden logon scheduled task.", AutoSize = true, Location = new Point(20, 52) };
+            var subtitle = new Label { Text = "Install or update DeepSeek Harness, then start it in the current desktop user session.", AutoSize = true, Location = new Point(20, 52) };
             Controls.Add(subtitle);
 
             var installGroup = new GroupBox { Text = "Install directory", Location = new Point(20, 84), Size = new Size(840, 86) };
@@ -114,7 +153,7 @@ namespace DeepSeekHarnessSetup
             var buttonsPanel = new FlowLayoutPanel { Location = new Point(20, 348), Size = new Size(840, 86), FlowDirection = FlowDirection.LeftToRight, WrapContents = true };
             Controls.Add(buttonsPanel);
 
-            NewButton(buttonsPanel, "Install and Start", 150, delegate { RunBackground("Install and start", InstallAndStart); });
+            NewButton(buttonsPanel, "Check, Update and Start", 180, delegate { RunBackground("Check, update and start", CheckUpdateAndStart); });
             NewButton(buttonsPanel, "Refresh Status", 110, delegate { RunBackground("Refresh status", UpdateStatus); });
             NewButton(buttonsPanel, "Create Autostart", 130, delegate { RunBackground("Create autostart", delegate { EnsureLauncher(); RegisterTask(); }); });
             NewButton(buttonsPanel, "Start Task", 100, delegate { RunBackground("Start scheduled task", StartTask); });
@@ -122,7 +161,6 @@ namespace DeepSeekHarnessSetup
             NewButton(buttonsPanel, "Remove Task", 100, delegate { RunBackground("Remove scheduled task", RemoveTask); });
             NewButton(buttonsPanel, "Open Web UI", 110, delegate { Process.Start(DefaultUrl); });
             NewButton(buttonsPanel, "Open Logs", 120, delegate { EnsureInstallDirectories(); Process.Start(GetLogRoot()); });
-            restartAdminButton = NewButton(buttonsPanel, "Restart as Admin", 130, delegate { RestartAsAdmin(); });
 
             progressLabel = new Label { Text = "Ready", AutoSize = true, Location = new Point(24, 440) };
             Controls.Add(progressLabel);
@@ -137,8 +175,7 @@ namespace DeepSeekHarnessSetup
             {
                 AddLog("Manager started.");
                 AddLog("Launcher script will be extracted to: " + GetLauncherPath());
-                AddLog(IsAdministrator() ? "Process is elevated." : "Process is not elevated. Use Restart as Admin only if the current user is an administrator.");
-                restartAdminButton.Enabled = !IsAdministrator();
+                AddLog("Process is elevated.");
                 UpdateStatus();
             };
         }
@@ -187,7 +224,37 @@ namespace DeepSeekHarnessSetup
         private string GetLogRoot() { return Path.Combine(GetInstallDir(), "logs"); }
         private string GetNpmCacheRoot() { return Path.Combine(GetInstallDir(), "npm-cache"); }
         private string GetRuntimeRoot() { return Path.Combine(GetInstallDir(), "runtime"); }
+        private string GetHomeRoot() { return Path.Combine(GetInstallDir(), "home"); }
         private string GetLauncherPath() { return Path.Combine(GetInstallDir(), "Start-DeepSeekHarness.ps1"); }
+
+        private string GetRunMode()
+        {
+            return IsDeepSeekHarnessSourceCheckout(GetInstallDir()) ? "source" : "package";
+        }
+
+        private bool IsDeepSeekHarnessSourceCheckout(string directory)
+        {
+            try
+            {
+                if (String.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory)) return false;
+                if (!File.Exists(Path.Combine(directory, "pnpm-workspace.yaml"))) return false;
+                if (!File.Exists(Path.Combine(directory, "apps\\cli\\src\\bin.ts"))) return false;
+
+                var packageJsonPath = Path.Combine(directory, "package.json");
+                if (!File.Exists(packageJsonPath)) return false;
+
+                var data = json.Deserialize<Dictionary<string, object>>(File.ReadAllText(packageJsonPath, Encoding.UTF8));
+                if (data == null || !data.ContainsKey("name") || !Object.Equals(data["name"], "@deepseek-ai/dsh-root")) return false;
+                if (!data.ContainsKey("scripts")) return false;
+
+                var scripts = data["scripts"] as Dictionary<string, object>;
+                return scripts != null && scripts.ContainsKey("dsh");
+            }
+            catch
+            {
+                return false;
+            }
+        }
 
         private void BrowseInstallDirectory()
         {
@@ -224,7 +291,6 @@ namespace DeepSeekHarnessSetup
                 return;
             }
             foreach (var button in actionButtons) button.Enabled = !busy;
-            if (restartAdminButton != null && !busy) restartAdminButton.Enabled = !IsAdministrator();
             installDirBox.Enabled = !busy;
             browseButton.Enabled = !busy;
             UseWaitCursor = false;
@@ -249,7 +315,6 @@ namespace DeepSeekHarnessSetup
             AddLog(name + "...");
             SetProgressText(name + "...");
             backgroundWorkName = name;
-            backgroundWorkStartedAt = DateTime.UtcNow;
             backgroundWorkRunning = true;
             StartProgressHeartbeat();
             ThreadPool.QueueUserWorkItem(delegate
@@ -282,8 +347,7 @@ namespace DeepSeekHarnessSetup
                 {
                     Thread.Sleep(15000);
                     if (!backgroundWorkRunning) break;
-                    var elapsed = DateTime.UtcNow - backgroundWorkStartedAt;
-                    var message = backgroundWorkName + " still running... elapsed " + FormatDuration(elapsed);
+                    var message = backgroundWorkName + " is still running...";
                     SetProgressText(message);
                 }
             });
@@ -309,6 +373,7 @@ namespace DeepSeekHarnessSetup
             Directory.CreateDirectory(GetLogRoot());
             Directory.CreateDirectory(GetNpmCacheRoot());
             Directory.CreateDirectory(GetRuntimeRoot());
+            Directory.CreateDirectory(GetHomeRoot());
             Directory.CreateDirectory(Path.GetDirectoryName(settingsPath));
             var settings = new Dictionary<string, object> { { "InstallDir", GetInstallDir() }, { "UpdatedAt", DateTime.Now.ToString("s") } };
             File.WriteAllText(settingsPath, json.Serialize(settings), Encoding.UTF8);
@@ -317,6 +382,7 @@ namespace DeepSeekHarnessSetup
         private void WriteLauncherConfig()
         {
             EnsureInstallDirectories();
+            var runMode = GetRunMode();
             var config = new Dictionary<string, object>
             {
                 { "PackageName", PackageName },
@@ -324,12 +390,16 @@ namespace DeepSeekHarnessSetup
                 { "Url", DefaultUrl },
                 { "InstallDir", GetInstallDir() },
                 { "NpmCache", GetNpmCacheRoot() },
+                { "HomeDir", GetHomeRoot() },
+                { "RunMode", runMode },
+                { "SourceDir", runMode == "source" ? GetInstallDir() : "" },
                 { "RuntimeDir", GetRuntimeRoot() },
                 { "LocalBin", Path.Combine(GetRuntimeRoot(), "node_modules\\.bin\\dsh.cmd") },
                 { "UpdatedAt", DateTime.Now.ToString("s") }
             };
             File.WriteAllText(GetConfigPath(), json.Serialize(config), Encoding.UTF8);
             AddLog("Config written: " + GetConfigPath());
+            AddLog("Run mode: " + runMode);
         }
 
         private void EnsureLauncher()
@@ -382,7 +452,7 @@ namespace DeepSeekHarnessSetup
             npmStatusLabel.Text = "npm: " + (GetNpmPath() == null ? "not found" : "found");
             npxStatusLabel.Text = "npx: " + (GetNpxPath() == null ? "not found" : "found");
             taskStatusLabel.Text = "Autostart: " + GetTaskState();
-            installInfoLabel.Text = "Current install directory: " + GetInstallDir();
+            installInfoLabel.Text = "Current install directory: " + GetInstallDir() + " (" + GetRunMode() + " mode)";
             cacheInfoLabel.Text = "npm cache: " + GetNpmCacheRoot();
         }
 
@@ -401,15 +471,19 @@ namespace DeepSeekHarnessSetup
             return "created";
         }
 
-        private void InstallAndStart()
+        private void CheckUpdateAndStart()
         {
             EnsureLauncher();
             EnsureNode();
-            EnsureDeepSeekHarnessPackage();
+            AddLog("Stopping current DeepSeek Harness before sync.");
+            StopTask();
+            SyncDeepSeekHarness();
+            EnsureLauncher();
             RegisterTask();
             StartTask();
             if (WaitForWebUi(DefaultUrl, TimeSpan.FromSeconds(120)))
             {
+                AddLog("DeepSeek Harness is ready.");
                 Process.Start(DefaultUrl);
             }
             else
@@ -500,6 +574,19 @@ namespace DeepSeekHarnessSetup
             return new Version(text.TrimStart('v'));
         }
 
+        private void SyncDeepSeekHarness()
+        {
+            var runMode = GetRunMode();
+            if (runMode == "source")
+            {
+                SyncSourceCheckout();
+            }
+            else
+            {
+                EnsureDeepSeekHarnessPackage();
+            }
+        }
+
         private void EnsureDeepSeekHarnessPackage()
         {
             EnsureInstallDirectories();
@@ -522,6 +609,120 @@ namespace DeepSeekHarnessSetup
             if (view.ExitCode != 0) throw new InvalidOperationException("npm view failed with code " + view.ExitCode);
         }
 
+        private void SyncSourceCheckout()
+        {
+            EnsureInstallDirectories();
+            var sourceDir = GetInstallDir();
+            if (!IsDeepSeekHarnessSourceCheckout(sourceDir))
+            {
+                throw new InvalidOperationException("Selected directory is not a DeepSeek Harness source checkout: " + sourceDir);
+            }
+
+            AddLog("DeepSeek Harness source checkout detected.");
+            var sourceUpdated = TryUpdateSourceCheckout(sourceDir);
+            EnsureSourceDependencies(sourceDir, sourceUpdated);
+        }
+
+        private bool TryUpdateSourceCheckout(string sourceDir)
+        {
+            if (!Directory.Exists(Path.Combine(sourceDir, ".git")))
+            {
+                AddLog("Source directory is not a Git checkout. Skipping source update.");
+                return false;
+            }
+
+            var git = GetGitPath();
+            if (git == null)
+            {
+                AddLog("git.exe was not found. Skipping source update and using the local source tree.");
+                return false;
+            }
+
+            var env = BuildToolEnvironment();
+            var status = RunProcess(git, "status --porcelain --untracked-files=no", env, false, sourceDir);
+            if (status.ExitCode != 0)
+            {
+                AddLog("Unable to inspect Git status. Skipping source update.");
+                return false;
+            }
+
+            if (!String.IsNullOrWhiteSpace(status.Output))
+            {
+                AddLog("Source checkout has local changes. Skipping git pull to avoid touching user work.");
+                return false;
+            }
+
+            AddLog("Updating source checkout with git pull --ff-only.");
+            var pull = RunProcess(git, "pull --ff-only", env, true, sourceDir);
+            if (pull.ExitCode != 0)
+            {
+                AddLog("git pull returned code " + pull.ExitCode + ". Continuing with the local source tree.");
+                return false;
+            }
+
+            return pull.Output.IndexOf("Already up to date", StringComparison.OrdinalIgnoreCase) < 0;
+        }
+
+        private void EnsureSourceDependencies(string sourceDir, bool sourceUpdated)
+        {
+            var env = BuildToolEnvironment();
+            var corepack = GetCorepackPath();
+            if (corepack != null)
+            {
+                AddLog("Installing source workspace dependencies with corepack pnpm.");
+                var install = RunProcess(corepack, "pnpm install --no-frozen-lockfile", env, true, sourceDir);
+                if (install.ExitCode != 0) throw new InvalidOperationException("pnpm install failed with code " + install.ExitCode);
+                AddLog("Source workspace dependencies are ready.");
+                EnsureSourceBuild(sourceDir, sourceUpdated, corepack, "pnpm run clean", "pnpm run build", env);
+                return;
+            }
+
+            var pnpm = GetPnpmPath();
+            if (pnpm != null)
+            {
+                AddLog("Installing source workspace dependencies with pnpm.");
+                var install = RunProcess(pnpm, "install --no-frozen-lockfile", env, true, sourceDir);
+                if (install.ExitCode != 0) throw new InvalidOperationException("pnpm install failed with code " + install.ExitCode);
+                AddLog("Source workspace dependencies are ready.");
+                EnsureSourceBuild(sourceDir, sourceUpdated, pnpm, "run clean", "run build", env);
+                return;
+            }
+
+            throw new FileNotFoundException("corepack.cmd or pnpm.cmd was not found. Install Node.js 22+ with Corepack, or install pnpm.");
+        }
+
+        private void EnsureSourceBuild(string sourceDir, bool sourceUpdated, string command, string cleanArguments, string buildArguments, IDictionary<string, string> env)
+        {
+            if (!sourceUpdated && !IsSourceBuildMissing(sourceDir))
+            {
+                AddLog("Source build artifacts are present. Skipping pnpm run build.");
+                return;
+            }
+
+            AddLog(sourceUpdated ? "Source changed. Building source workspace." : "Source build artifacts are missing. Building source workspace.");
+            AddLog("Cleaning old source build artifacts before build.");
+            var clean = RunProcess(command, cleanArguments, env, true, sourceDir);
+            if (clean.ExitCode != 0) throw new InvalidOperationException("source clean failed with code " + clean.ExitCode);
+            var build = RunProcess(command, buildArguments, env, true, sourceDir);
+            if (build.ExitCode != 0) throw new InvalidOperationException("source build failed with code " + build.ExitCode);
+            AddLog("Source workspace build completed.");
+        }
+
+        private bool IsSourceBuildMissing(string sourceDir)
+        {
+            var required = new[]
+            {
+                "packages\\api\\session-controller\\lib\\client.js",
+                "packages\\api\\workspace-controller\\lib\\client.js",
+                "packages\\client\\ui-chat\\lib\\client.js",
+                "packages\\client\\ui-renderer\\lib\\client.js",
+                "packages\\llm\\llm\\lib\\typert.host.js",
+                "packages\\subagent\\subagent\\lib\\typert.host.js"
+            };
+
+            return required.Any(path => !File.Exists(Path.Combine(sourceDir, path)));
+        }
+
         private void RegisterTask()
         {
             EnsureLauncher();
@@ -529,6 +730,7 @@ namespace DeepSeekHarnessSetup
             try
             {
                 RegisterScheduledTaskWithCom();
+                lastAutostartUsedRunKey = false;
                 RemoveRunKeyAutostart(false);
                 AddLog("Scheduled task created: " + TaskName);
                 AddLog("Task install directory: " + GetInstallDir());
@@ -536,17 +738,21 @@ namespace DeepSeekHarnessSetup
             catch (Exception ex)
             {
                 AddLog("Scheduled task creation failed: " + ex.Message);
-                if (!IsAdministrator())
-                {
-                    AddLog("If this Windows account is an administrator, click Restart as Admin and run Create Autostart again.");
-                }
                 AddLog("Falling back to current-user Run autostart. This does not require administrator rights.");
                 RegisterRunKeyAutostart();
+                lastAutostartUsedRunKey = true;
             }
         }
 
         private void StartTask()
         {
+            if (lastAutostartUsedRunKey)
+            {
+                AddLog("Starting through the hidden launcher because this run used HKCU Run fallback.");
+                StartHiddenLauncher();
+                return;
+            }
+
             var result = RunProcess("schtasks.exe", "/Run /TN " + QuoteArg(TaskName), null, true);
             if (result.ExitCode == 0)
             {
@@ -567,7 +773,76 @@ namespace DeepSeekHarnessSetup
         {
             var result = RunProcess("schtasks.exe", "/End /TN " + QuoteArg(TaskName), null, true);
             if (result.ExitCode != 0) AddLog("schtasks end returned code " + result.ExitCode + ".");
+            StopHarnessProcessesFromPidFiles();
             AddLog("Scheduled task stop requested: " + TaskName);
+        }
+
+        private void StopHarnessProcessesFromPidFiles()
+        {
+            var logRoot = GetLogRoot();
+            if (!Directory.Exists(logRoot))
+            {
+                StopProcessListeningOnPort(3080);
+                return;
+            }
+
+            foreach (var pidFile in Directory.GetFiles(logRoot, "dsh-web*.pid"))
+            {
+                try
+                {
+                    var text = File.ReadAllText(pidFile).Trim();
+                    int pid;
+                    if (!Int32.TryParse(text, out pid)) continue;
+
+                    using (var process = Process.GetProcessById(pid))
+                    {
+                        if (process.HasExited) continue;
+                        AddLog("Stopping dsh process from pid file: " + pid);
+                        process.Kill();
+                        process.WaitForExit(10000);
+                    }
+                }
+                catch (ArgumentException)
+                {
+                }
+                catch (Exception ex)
+                {
+                    AddLog("Failed to stop process from " + Path.GetFileName(pidFile) + ": " + ex.Message);
+                }
+            }
+
+            StopProcessListeningOnPort(3080);
+        }
+
+        private void StopProcessListeningOnPort(int port)
+        {
+            try
+            {
+                var result = RunProcess("netstat.exe", "-ano -p tcp", null, false);
+                if (result.ExitCode != 0) return;
+
+                foreach (var rawLine in result.Output.Split(new[] { "\r\n", "\n" }, StringSplitOptions.RemoveEmptyEntries))
+                {
+                    var line = rawLine.Trim();
+                    if (!line.Contains(":" + port + " ") || line.IndexOf("LISTENING", StringComparison.OrdinalIgnoreCase) < 0) continue;
+
+                    var parts = line.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+                    int pid;
+                    if (parts.Length < 5 || !Int32.TryParse(parts[parts.Length - 1], out pid)) continue;
+
+                    using (var process = Process.GetProcessById(pid))
+                    {
+                        if (process.HasExited) continue;
+                        AddLog("Stopping process listening on port " + port + ": " + pid);
+                        process.Kill();
+                        process.WaitForExit(10000);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                AddLog("Failed to stop process listening on port " + port + ": " + ex.Message);
+            }
         }
 
         private void RemoveTask()
@@ -751,11 +1026,33 @@ namespace DeepSeekHarnessSetup
             return FindCommand("npx.cmd", NodeFallbacks("npx.cmd"));
         }
 
+        private string GetCorepackPath()
+        {
+            return FindCommand("corepack.cmd", NodeFallbacks("corepack.cmd"));
+        }
+
+        private string GetPnpmPath()
+        {
+            return FindCommand("pnpm.cmd");
+        }
+
+        private string GetGitPath()
+        {
+            return FindCommand("git.exe", GitFallbacks());
+        }
+
         private IEnumerable<string> NodeFallbacks(string file)
         {
             yield return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "nodejs\\" + file);
             var pf86 = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
             if (!String.IsNullOrEmpty(pf86)) yield return Path.Combine(pf86, "nodejs\\" + file);
+        }
+
+        private IEnumerable<string> GitFallbacks()
+        {
+            yield return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Git\\cmd\\git.exe");
+            var pf86 = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
+            if (!String.IsNullOrEmpty(pf86)) yield return Path.Combine(pf86, "Git\\cmd\\git.exe");
         }
 
         private string FindCommand(string fileName)
@@ -796,7 +1093,26 @@ namespace DeepSeekHarnessSetup
             return String.Join(";", parts.Where(p => !String.IsNullOrEmpty(p)).ToArray());
         }
 
+        private Dictionary<string, string> BuildToolEnvironment()
+        {
+            return new Dictionary<string, string>
+            {
+                { "npm_config_cache", GetNpmCacheRoot() },
+                { "Path", BuildSearchPath() },
+                { "npm_config_scripts_prepend_node_path", "true" },
+                { "DSH_HOME", GetHomeRoot() },
+                { "NO_COLOR", "1" },
+                { "FORCE_COLOR", "0" },
+                { "COREPACK_ENABLE_DOWNLOAD_PROMPT", "0" }
+            };
+        }
+
         private ProcessResult RunProcess(string fileName, string arguments, IDictionary<string, string> env, bool logOutput)
+        {
+            return RunProcess(fileName, arguments, env, logOutput, null);
+        }
+
+        private ProcessResult RunProcess(string fileName, string arguments, IDictionary<string, string> env, bool logOutput, string workingDirectory)
         {
             var info = new ProcessStartInfo(fileName, arguments)
             {
@@ -808,6 +1124,7 @@ namespace DeepSeekHarnessSetup
                 StandardOutputEncoding = GetProcessOutputEncoding(fileName),
                 StandardErrorEncoding = GetProcessOutputEncoding(fileName)
             };
+            if (!String.IsNullOrWhiteSpace(workingDirectory)) info.WorkingDirectory = workingDirectory;
             if (env != null)
             {
                 foreach (var item in env) info.EnvironmentVariables[item.Key] = item.Value;
@@ -846,42 +1163,9 @@ namespace DeepSeekHarnessSetup
             return Encoding.Default;
         }
 
-        private void RestartAsAdmin()
-        {
-            try
-            {
-                EnsureInstallDirectories();
-                var info = new ProcessStartInfo(Application.ExecutablePath)
-                {
-                    UseShellExecute = true,
-                    Verb = "runas",
-                    WorkingDirectory = scriptRoot
-                };
-                Process.Start(info);
-                Close();
-            }
-            catch (Exception ex)
-            {
-                AddLog("Restart as admin failed: " + ex.Message);
-            }
-        }
-
         private static string QuoteArg(string value)
         {
             return "\"" + (value ?? "").Replace("\"", "\\\"") + "\"";
-        }
-
-        private static string FormatDuration(TimeSpan duration)
-        {
-            if (duration.TotalHours >= 1)
-            {
-                return ((int)duration.TotalHours) + "h " + duration.Minutes + "m " + duration.Seconds + "s";
-            }
-            if (duration.TotalMinutes >= 1)
-            {
-                return duration.Minutes + "m " + duration.Seconds + "s";
-            }
-            return duration.Seconds + "s";
         }
 
         private sealed class NodeInfo
