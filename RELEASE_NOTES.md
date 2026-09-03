@@ -3,19 +3,19 @@
 Tag:
 
 ```text
-v1.1.0
+v1.1
 ```
 
 Release title:
 
 ```text
-DeepSeek Harness Setup for Windows v1.1.0
+DeepSeek Harness Setup for Windows v1.1
 ```
 
 Release body:
 
 ```markdown
-## DeepSeek Harness Setup for Windows v1.1.0
+## DeepSeek Harness Setup for Windows v1.1
 
 这个版本重点优化了安装、更新和启动流程，并补上了源码模式支持。相比 v1.0，现在不再需要用户手动判断是否提权，也不需要区分“安装”和“更新”两个入口。
 
