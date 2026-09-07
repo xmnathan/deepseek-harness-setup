@@ -145,6 +145,30 @@ function Get-PnpmPath {
     return $null
 }
 
+function Invoke-LoggedNative {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$FilePath,
+        [string[]]$ArgumentList = @()
+    )
+
+    # Windows PowerShell 5.1 wraps native stderr as ErrorRecord objects. With
+    # ErrorActionPreference=Stop, harmless pnpm/npm output aborts the launcher.
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        & $FilePath @ArgumentList 2>&1 | ForEach-Object {
+            $_.ToString() |
+                Tee-Object -FilePath $logFile -Append |
+                Tee-Object -FilePath $latestLog -Append |
+                Write-Host
+        }
+        return [int]$LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+}
+
 $packageName = '@deepseek-ai/dsh@latest'
 $arguments = @('web')
 $webUrl = 'http://127.0.0.1:3080'
@@ -216,18 +240,18 @@ if ($runMode -eq 'source') {
             $sourceArguments = @('run', 'dsh') + $arguments
             "cwd: $sourceRoot" | Tee-Object -FilePath $logFile -Append | Tee-Object -FilePath $latestLog -Append
             "launch: $pnpm $($sourceArguments -join ' ')" | Tee-Object -FilePath $logFile -Append | Tee-Object -FilePath $latestLog -Append
-            & $pnpm @sourceArguments 2>&1 | Tee-Object -FilePath $logFile -Append | Tee-Object -FilePath $latestLog -Append
+            $exitCode = Invoke-LoggedNative -FilePath $pnpm -ArgumentList $sourceArguments
         } elseif ($corepack) {
             $sourceArguments = @('pnpm', 'run', 'dsh') + $arguments
             "cwd: $sourceRoot" | Tee-Object -FilePath $logFile -Append | Tee-Object -FilePath $latestLog -Append
             "launch: $corepack $($sourceArguments -join ' ')" | Tee-Object -FilePath $logFile -Append | Tee-Object -FilePath $latestLog -Append
-            & $corepack @sourceArguments 2>&1 | Tee-Object -FilePath $logFile -Append | Tee-Object -FilePath $latestLog -Append
+            $exitCode = Invoke-LoggedNative -FilePath $corepack -ArgumentList $sourceArguments
         } else {
             $npm = Get-NpmPath
             $sourceArguments = @('run', 'dsh', '--') + $arguments
             "cwd: $sourceRoot" | Tee-Object -FilePath $logFile -Append | Tee-Object -FilePath $latestLog -Append
             "launch: $npm $($sourceArguments -join ' ')" | Tee-Object -FilePath $logFile -Append | Tee-Object -FilePath $latestLog -Append
-            & $npm @sourceArguments 2>&1 | Tee-Object -FilePath $logFile -Append | Tee-Object -FilePath $latestLog -Append
+            $exitCode = Invoke-LoggedNative -FilePath $npm -ArgumentList $sourceArguments
         }
     } finally {
         Pop-Location
@@ -237,16 +261,15 @@ if ($runMode -eq 'source') {
     try {
         "cwd: $runtimeRoot" | Tee-Object -FilePath $logFile -Append | Tee-Object -FilePath $latestLog -Append
         "launch: $localBin $($arguments -join ' ')" | Tee-Object -FilePath $logFile -Append | Tee-Object -FilePath $latestLog -Append
-        & $localBin @arguments 2>&1 | Tee-Object -FilePath $logFile -Append | Tee-Object -FilePath $latestLog -Append
+        $exitCode = Invoke-LoggedNative -FilePath $localBin -ArgumentList $arguments
     } finally {
         Pop-Location
     }
 } else {
     "local bin not found, fallback to npx" | Tee-Object -FilePath $logFile -Append | Tee-Object -FilePath $latestLog -Append
     $npxArguments = @('--yes', $packageName) + $arguments
-    & $npx @npxArguments 2>&1 | Tee-Object -FilePath $logFile -Append | Tee-Object -FilePath $latestLog -Append
+    $exitCode = Invoke-LoggedNative -FilePath $npx -ArgumentList $npxArguments
 }
-$exitCode = $LASTEXITCODE
 
 "[$(Get-Date -Format s)] Exited with code $exitCode" | Tee-Object -FilePath $logFile -Append | Tee-Object -FilePath $latestLog -Append
 exit $exitCode

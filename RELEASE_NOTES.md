@@ -64,6 +64,7 @@ Release body:
 - 优化停止旧进程逻辑，会尝试根据 pid 文件和 `3080` 端口结束旧的 DeepSeek Harness 进程。
 - 源码模式启动参数修正为 `pnpm run dsh web`，避免把多余的 `--` 传给 DeepSeek Harness CLI。
 - 源码模式改为每次启动前 clean + build，减少上游新增构建产物后无法启动的问题。
+- 修复 Windows PowerShell 5.1 把 pnpm/npm 的正常 stderr 输出当成终止错误，导致启动脚本提前退出、页面模型持续显示“加载中”的问题。
 
 ### 使用方式
 
