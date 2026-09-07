@@ -14,7 +14,7 @@ DeepSeekHarnessSetup.exe
 
 1. 启动时自动检查管理员权限；非管理员状态会立即触发 UAC 提权。
 2. 支持用户指定安装目录，默认目录为 `D:\deepseek-harness`。
-3. 自动安装 Node.js LTS，并处理 npm、npx、corepack、pnpm 的路径刷新。
+3. 自动安装 Node.js LTS，并处理 npm、npx、pnpm、corepack 的路径刷新。
 4. 一个按钮完成检查、安装、更新、自启动配置和启动。
 5. 支持 npm 包模式和源码模式。
 6. 使用当前桌面用户会话启动，避免 NSSM/Windows Service Session 0 导致的工作区、沙箱、本地文件访问异常。
@@ -116,20 +116,24 @@ package.json 的 name 为 @deepseek-ai/dsh-root
 package.json 中存在 dsh 脚本
 ```
 
+源码模式会优先使用本机已经安装的 `pnpm.cmd`。如果机器上存在多个 `pnpm.cmd`，会选择版本号最高的那个；安装器不会为了 pnpm 主动联网安装或强制升级。
+
 源码模式会在源码根目录执行：
 
 ```text
-corepack pnpm install --no-frozen-lockfile
-corepack pnpm run build
-corepack pnpm run dsh web
-```
-
-如果系统没有 `corepack.cmd`，但有 `pnpm.cmd`，会改用：
-
-```text
 pnpm install --no-frozen-lockfile
+pnpm run clean
 pnpm run build
 pnpm run dsh web
+```
+
+如果本机没有可用的 `pnpm.cmd`，但系统存在 `corepack.cmd`，会回退为：
+
+```text
+corepack pnpm install --no-frozen-lockfile
+corepack pnpm run clean
+corepack pnpm run build
+corepack pnpm run dsh web
 ```
 
 源码目录是 Git 仓库且 tracked 文件没有本地改动时，管理器会先执行：
@@ -140,7 +144,7 @@ git pull --ff-only
 
 如果检测到本地改动，会跳过 `git pull`，避免覆盖用户源码。
 
-`pnpm run build` 只在源码更新后，或关键构建产物缺失时执行。源码首次运行通常必须构建，否则 Web 服务可能无法启动。
+源码模式每次都会先 clean 再 build。这样会多花一些时间，但可以避免上游新增构建产物后，旧产物检查逻辑误判为“无需构建”，最终导致 Web 服务无法启动。
 
 ## 目录结构
 
@@ -241,7 +245,7 @@ dsh plugin --profile <name> install
 - 网络需要能访问 `nodejs.org` 和 npm registry。
 - npm 包模式不需要 Git、pnpm、Python 或 Visual Studio。
 - 源码模式建议安装 Git。
-- 源码模式需要 Corepack 或 pnpm。Node.js 22+ 通常自带 Corepack。
+- 源码模式需要 pnpm 或 Corepack。管理器优先使用本机已安装的 pnpm；没有 pnpm 时才使用 Corepack 兜底。
 
 Node.js 安装策略：
 
@@ -267,7 +271,7 @@ Node.js 安装策略：
 
 优先查看 `latest.log`。常见原因：
 
-- 源码还没有 build。
+- 源码 build 失败。
 - Corepack/pnpm 不可用。
 - 迁移后的 profile 引用了本地插件，但 profile 依赖尚未重建。
 

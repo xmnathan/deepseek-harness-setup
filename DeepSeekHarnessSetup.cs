@@ -665,26 +665,28 @@ namespace DeepSeekHarnessSetup
 
         private void EnsureSourceDependencies(string sourceDir, bool sourceUpdated)
         {
-            var env = BuildToolEnvironment();
-            var corepack = GetCorepackPath();
-            if (corepack != null)
+            var pnpm = GetPnpmInfo();
+            if (pnpm != null)
             {
-                AddLog("Installing source workspace dependencies with corepack pnpm.");
-                var install = RunProcess(corepack, "pnpm install --no-frozen-lockfile", env, true, sourceDir);
+                var env = BuildToolEnvironment(Path.GetDirectoryName(pnpm.Path));
+                AddLog("Using installed pnpm: " + pnpm.VersionText + " (" + pnpm.Path + ")");
+                AddLog("Installing source workspace dependencies with installed pnpm.");
+                var install = RunProcess(pnpm.Path, "install --no-frozen-lockfile", env, true, sourceDir);
                 if (install.ExitCode != 0) throw new InvalidOperationException("pnpm install failed with code " + install.ExitCode);
                 AddLog("Source workspace dependencies are ready.");
-                EnsureSourceBuild(sourceDir, sourceUpdated, corepack, "pnpm run clean", "pnpm run build", env);
+                EnsureSourceBuild(sourceDir, sourceUpdated, pnpm.Path, "run clean", "run build", env);
                 return;
             }
 
-            var pnpm = GetPnpmPath();
-            if (pnpm != null)
+            var envWithCorepack = BuildToolEnvironment();
+            var corepack = GetCorepackPath();
+            if (corepack != null)
             {
-                AddLog("Installing source workspace dependencies with pnpm.");
-                var install = RunProcess(pnpm, "install --no-frozen-lockfile", env, true, sourceDir);
+                AddLog("Installed pnpm.cmd was not found. Falling back to corepack pnpm.");
+                var install = RunProcess(corepack, "pnpm install --no-frozen-lockfile", envWithCorepack, true, sourceDir);
                 if (install.ExitCode != 0) throw new InvalidOperationException("pnpm install failed with code " + install.ExitCode);
                 AddLog("Source workspace dependencies are ready.");
-                EnsureSourceBuild(sourceDir, sourceUpdated, pnpm, "run clean", "run build", env);
+                EnsureSourceBuild(sourceDir, sourceUpdated, corepack, "pnpm run clean", "pnpm run build", envWithCorepack);
                 return;
             }
 
@@ -693,34 +695,13 @@ namespace DeepSeekHarnessSetup
 
         private void EnsureSourceBuild(string sourceDir, bool sourceUpdated, string command, string cleanArguments, string buildArguments, IDictionary<string, string> env)
         {
-            if (!sourceUpdated && !IsSourceBuildMissing(sourceDir))
-            {
-                AddLog("Source build artifacts are present. Skipping pnpm run build.");
-                return;
-            }
-
-            AddLog(sourceUpdated ? "Source changed. Building source workspace." : "Source build artifacts are missing. Building source workspace.");
-            AddLog("Cleaning old source build artifacts before build.");
+            AddLog(sourceUpdated ? "Source changed. Rebuilding source workspace." : "Rebuilding source workspace.");
+            AddLog("Cleaning source build artifacts before build.");
             var clean = RunProcess(command, cleanArguments, env, true, sourceDir);
             if (clean.ExitCode != 0) throw new InvalidOperationException("source clean failed with code " + clean.ExitCode);
             var build = RunProcess(command, buildArguments, env, true, sourceDir);
             if (build.ExitCode != 0) throw new InvalidOperationException("source build failed with code " + build.ExitCode);
             AddLog("Source workspace build completed.");
-        }
-
-        private bool IsSourceBuildMissing(string sourceDir)
-        {
-            var required = new[]
-            {
-                "packages\\api\\session-controller\\lib\\client.js",
-                "packages\\api\\workspace-controller\\lib\\client.js",
-                "packages\\client\\ui-chat\\lib\\client.js",
-                "packages\\client\\ui-renderer\\lib\\client.js",
-                "packages\\llm\\llm\\lib\\typert.host.js",
-                "packages\\subagent\\subagent\\lib\\typert.host.js"
-            };
-
-            return required.Any(path => !File.Exists(Path.Combine(sourceDir, path)));
         }
 
         private void RegisterTask()
@@ -1031,9 +1012,39 @@ namespace DeepSeekHarnessSetup
             return FindCommand("corepack.cmd", NodeFallbacks("corepack.cmd"));
         }
 
-        private string GetPnpmPath()
+        private PnpmInfo GetPnpmInfo()
         {
-            return FindCommand("pnpm.cmd");
+            var candidates = FindCommandCandidates("pnpm.cmd", Enumerable.Empty<string>()).ToList();
+            if (candidates.Count == 0) return null;
+
+            string bestPath = null;
+            Version bestVersion = null;
+            string bestVersionText = null;
+            foreach (var candidate in candidates)
+            {
+                try
+                {
+                    var result = RunProcess(candidate, "--version", null, false);
+                    if (result.ExitCode != 0) continue;
+
+                    var text = result.Output.Trim();
+                    Version version;
+                    if (!Version.TryParse(text, out version)) continue;
+
+                    if (bestVersion == null || version > bestVersion)
+                    {
+                        bestVersion = version;
+                        bestPath = candidate;
+                        bestVersionText = text;
+                    }
+                }
+                catch
+                {
+                }
+            }
+
+            if (bestPath == null) bestPath = candidates[0];
+            return new PnpmInfo { Path = bestPath, VersionText = bestVersionText ?? "unknown" };
         }
 
         private string GetGitPath()
@@ -1062,9 +1073,17 @@ namespace DeepSeekHarnessSetup
 
         private string FindCommand(string fileName, IEnumerable<string> fallbackPaths)
         {
+            return FindCommandCandidates(fileName, fallbackPaths).FirstOrDefault();
+        }
+
+        private IEnumerable<string> FindCommandCandidates(string fileName, IEnumerable<string> fallbackPaths)
+        {
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var candidates = new List<string>();
+
             foreach (var path in fallbackPaths)
             {
-                if (!String.IsNullOrEmpty(path) && File.Exists(path)) return path;
+                if (!String.IsNullOrEmpty(path) && File.Exists(path) && seen.Add(path)) candidates.Add(path);
             }
 
             foreach (var rawDir in BuildSearchPath().Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries))
@@ -1072,17 +1091,24 @@ namespace DeepSeekHarnessSetup
                 try
                 {
                     var candidate = Path.Combine(Environment.ExpandEnvironmentVariables(rawDir.Trim()), fileName);
-                    if (File.Exists(candidate)) return candidate;
+                    if (File.Exists(candidate) && seen.Add(candidate)) candidates.Add(candidate);
                 }
                 catch { }
             }
-            return null;
+
+            return candidates;
         }
 
         private string BuildSearchPath()
         {
+            return BuildSearchPath(null);
+        }
+
+        private string BuildSearchPath(string preferredDirectory)
+        {
             var parts = new List<string>
             {
+                preferredDirectory,
                 Environment.GetEnvironmentVariable("Path", EnvironmentVariableTarget.Machine),
                 Environment.GetEnvironmentVariable("Path", EnvironmentVariableTarget.User),
                 Environment.GetEnvironmentVariable("Path", EnvironmentVariableTarget.Process),
@@ -1095,10 +1121,15 @@ namespace DeepSeekHarnessSetup
 
         private Dictionary<string, string> BuildToolEnvironment()
         {
+            return BuildToolEnvironment(null);
+        }
+
+        private Dictionary<string, string> BuildToolEnvironment(string preferredToolDirectory)
+        {
             return new Dictionary<string, string>
             {
                 { "npm_config_cache", GetNpmCacheRoot() },
-                { "Path", BuildSearchPath() },
+                { "Path", BuildSearchPath(preferredToolDirectory) },
                 { "npm_config_scripts_prepend_node_path", "true" },
                 { "DSH_HOME", GetHomeRoot() },
                 { "NO_COLOR", "1" },
@@ -1173,6 +1204,12 @@ namespace DeepSeekHarnessSetup
             public string Path;
             public string Text;
             public Version Version;
+        }
+
+        private sealed class PnpmInfo
+        {
+            public string Path;
+            public string VersionText;
         }
 
         private sealed class ProcessResult

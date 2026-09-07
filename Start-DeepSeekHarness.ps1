@@ -124,9 +124,22 @@ function Get-CorepackPath {
 function Get-PnpmPath {
     Refresh-NodePath
 
-    $command = Get-Command pnpm.cmd -ErrorAction SilentlyContinue
-    if ($command) {
-        return $command.Source
+    $commands = @(Get-Command pnpm.cmd -All -ErrorAction SilentlyContinue)
+    $best = $null
+    $bestVersion = $null
+    foreach ($command in $commands) {
+        try {
+            $text = & $command.Source --version 2>$null
+            $version = [Version]($text | Select-Object -First 1)
+            if ($null -eq $bestVersion -or $version -gt $bestVersion) {
+                $bestVersion = $version
+                $best = $command.Source
+            }
+        } catch {
+        }
+    }
+    if ($best) {
+        return $best
     }
 
     return $null
@@ -199,16 +212,16 @@ if ($runMode -eq 'source') {
     $pnpm = Get-PnpmPath
     Push-Location $sourceRoot
     try {
-        if ($corepack) {
-            $sourceArguments = @('pnpm', 'run', 'dsh') + $arguments
-            "cwd: $sourceRoot" | Tee-Object -FilePath $logFile -Append | Tee-Object -FilePath $latestLog -Append
-            "launch: $corepack $($sourceArguments -join ' ')" | Tee-Object -FilePath $logFile -Append | Tee-Object -FilePath $latestLog -Append
-            & $corepack @sourceArguments 2>&1 | Tee-Object -FilePath $logFile -Append | Tee-Object -FilePath $latestLog -Append
-        } elseif ($pnpm) {
+        if ($pnpm) {
             $sourceArguments = @('run', 'dsh') + $arguments
             "cwd: $sourceRoot" | Tee-Object -FilePath $logFile -Append | Tee-Object -FilePath $latestLog -Append
             "launch: $pnpm $($sourceArguments -join ' ')" | Tee-Object -FilePath $logFile -Append | Tee-Object -FilePath $latestLog -Append
             & $pnpm @sourceArguments 2>&1 | Tee-Object -FilePath $logFile -Append | Tee-Object -FilePath $latestLog -Append
+        } elseif ($corepack) {
+            $sourceArguments = @('pnpm', 'run', 'dsh') + $arguments
+            "cwd: $sourceRoot" | Tee-Object -FilePath $logFile -Append | Tee-Object -FilePath $latestLog -Append
+            "launch: $corepack $($sourceArguments -join ' ')" | Tee-Object -FilePath $logFile -Append | Tee-Object -FilePath $latestLog -Append
+            & $corepack @sourceArguments 2>&1 | Tee-Object -FilePath $logFile -Append | Tee-Object -FilePath $latestLog -Append
         } else {
             $npm = Get-NpmPath
             $sourceArguments = @('run', 'dsh', '--') + $arguments

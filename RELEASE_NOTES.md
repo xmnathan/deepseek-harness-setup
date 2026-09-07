@@ -30,14 +30,15 @@ Release body:
 ### 新增源码模式
 
 - 选择 DeepSeek Harness 源码仓库根目录时，管理器会自动切换到源码模式。
-- 源码模式会执行 `pnpm install`，并在源码更新或构建产物缺失时自动执行 `pnpm run build`。
+- 源码模式优先使用本机已安装的 `pnpm.cmd`；如果存在多个，会选择版本号最高的那个，不会主动联网强制升级 pnpm。
+- 源码模式会执行 `pnpm install`，并且每次都会先 clean 再执行 `pnpm run build`，避免旧构建产物误判导致启动失败。
 - 如果源码目录是 Git 仓库且 tracked 文件没有本地改动，会自动执行 `git pull --ff-only`。
 - 如果检测到本地源码改动，会跳过 `git pull`，避免覆盖用户自己的代码。
 
 ### 安装和更新体验
 
 - npm 包模式每次点击 `Check, Update and Start` 都会执行 `npm install @deepseek-ai/dsh@latest`，由 npm 自动判断是否需要更新。
-- 源码模式每次点击同一按钮会自动同步源码、依赖和构建产物。
+- 源码模式每次点击同一按钮会自动同步源码、依赖，并重新构建源码。
 - 安装过程保留动态进度条和当前状态提示，减少长时间安装时“程序像卡住了”的感觉。
 - 日志不再输出 elapsed 读秒信息，安装状态放在界面上展示。
 
@@ -62,7 +63,7 @@ Release body:
 - 修复使用 HKCU Run fallback 后，升级流程可能仍尝试启动旧计划任务的问题。
 - 优化停止旧进程逻辑，会尝试根据 pid 文件和 `3080` 端口结束旧的 DeepSeek Harness 进程。
 - 源码模式启动参数修正为 `pnpm run dsh web`，避免把多余的 `--` 传给 DeepSeek Harness CLI。
-- 源码构建前会先执行 clean，减少旧构建产物导致的启动异常。
+- 源码模式改为每次启动前 clean + build，减少上游新增构建产物后无法启动的问题。
 
 ### 使用方式
 
